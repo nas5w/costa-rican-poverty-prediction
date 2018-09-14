@@ -2,6 +2,11 @@ library(dplyr)
 library(caret)
 library(lightgbm)
 
+# Path to train and test datasets
+train_path = 'train.csv'
+test_path = 'test.csv'
+submission_path = 'submission.csv'
+
 # Cleans training or test data for the Costa Rica dataset
 clean <- function(data) {
    
@@ -21,15 +26,6 @@ clean <- function(data) {
     summarize(num_members = n())
   cleaned <- inner_join(cleaned, num_members)
   rm(num_members)
-  
-  # Remove households with no head
-  no_head <- by_household %>%
-    summarize(head = max(parentesco1)) %>%
-    filter(head == 0) %>%
-    select(idhogar)
-  cleaned <- cleaned %>%
-    filter(!(idhogar %in% no_head$idhogar))
-  rm(no_head)
   
   # Appears ot be a storng correlation with increased rent and increased wealth
   # When rent is high enough. Let's create categories, including rent totally missing
@@ -279,7 +275,7 @@ clean <- function(data) {
 
 
 # Load and clean data
-data <- read.csv('train.csv')
+data <- read.csv(train_path)
 cleaned_data <- clean(data)
 
 # Split into test/train
@@ -316,8 +312,8 @@ for(fold in flds) {
                      10000,
                      valids,
                      min_data = 1,
-                     learning_rate = 0.001,
-                     early_stopping_rounds = 1000)
+                     learning_rate = 0.0001,
+                     early_stopping_rounds = 10000)
 
   # Append CV results to overall DF
   cv_predict <- as.data.frame(predict(model, valid_inputs, reshape = TRUE))
@@ -326,4 +322,28 @@ for(fold in flds) {
   cv_results <- rbind(cv_results, cv_predict)
 }
 
+# Cross-Validation Confusion Matrix
 confusionMatrix(as.factor(cv_results$prediction), as.factor(cv_results$reference))
+
+# Test model performance on holdout data
+test_inputs <- as.matrix(test %>% select(-c(idhogar,target)))
+train_labels <- as.matrix(test %>% select(target))
+test_predict <- as.data.frame(predict(model, test_inputs, reshape = TRUE))
+test_predict$prediction <- apply(test_predict, 1, which.max) - 1
+test_predict$reference <- train_labels
+confusionMatrix(as.factor(test_predict$prediction), as.factor(test_predict$reference))
+
+
+# Submission dataset
+submission <- read.csv(test_path)
+cleaned_submission <- clean(submission)
+submission_inputs <- as.matrix(cleaned_submission %>% select(-c(idhogar)))
+submission_predict <- as.data.frame(predict(model, submission_inputs, reshape = TRUE))
+submission_predict$prediction <- apply(submission_predict, 1, which.max)
+submission_predict$idhogar <- cleaned_submission$idhogar
+
+final_submission <- submission %>% 
+  inner_join(tbl_df(submission_predict)) %>%
+  select(Id = Id, Target = prediction)
+
+write.csv(final_submission, submission_path, row.names = FALSE)
