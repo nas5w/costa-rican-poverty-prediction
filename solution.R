@@ -213,6 +213,8 @@ clean <- function(data) {
               num_complete_tech_secondary = sum(instlevel7),
               num_undergrad = sum(instlevel8),
               num_graduate = sum(instlevel9))
+  # Impute missing adult education levels
+  temp$average_adult_edu_level[is.na(temp$average_adult_edu_level)] <- mean(temp$average_adult_edu_level, na.rm = TRUE)
   cleaned <- cleaned %>% inner_join(temp)
   rm(temp)
   
@@ -254,8 +256,7 @@ clean <- function(data) {
     summarize(min_age = min(age),
               max_age = max(age),
               avg_age = mean(age),
-              median_age = median(age),
-              sd_age = sd(age))
+              median_age = median(age))
   cleaned <- cleaned %>% inner_join(temp)
   rm(temp)
   
@@ -306,17 +307,16 @@ for(fold in flds) {
   dtest <- lgb.Dataset.create.valid(dtrain, data = valid_inputs, label = valid_labels)
   valids <- list(test = dtest)
 
-  params <- list(objective = 'multiclass', metric = 'multi_error', num_class = 4)
+  params <- list(objective = 'multiclass', metric = 'multi_logloss', num_class = 4)
   model <- lgb.train(params,
                      dtrain,
-                     10000,
+                     100000,
                      valids,
-                     min_data = 1,
-                     learning_rate = 0.0001,
-                     early_stopping_rounds = 10000)
+                     learning_rate = 0.001,
+                     early_stopping_rounds = 50000)
 
   # Append CV results to overall DF
-  cv_predict <- as.data.frame(predict(model, valid_inputs, reshape = TRUE))
+  cv_predict <- as.data.frame(matrix(predict(model, valid_inputs), ncol = 4, byrow = TRUE))
   cv_predict$prediction <- apply(cv_predict, 1, which.max) - 1
   cv_predict$reference <- cv_valid$target
   cv_results <- rbind(cv_results, cv_predict)
@@ -324,6 +324,7 @@ for(fold in flds) {
 
 # Cross-Validation Confusion Matrix
 confusionMatrix(as.factor(cv_results$prediction), as.factor(cv_results$reference))
+
 
 # Test model performance on holdout data
 test_inputs <- as.matrix(test %>% select(-c(idhogar,target)))
